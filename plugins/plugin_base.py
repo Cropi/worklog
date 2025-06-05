@@ -9,13 +9,23 @@ class PluginBase(ABC):
         pass
     
     @abstractmethod
-    def process(self, config, since_date, until_date):
+    def parse(self, config):
+        """
+        Parse and validate the configuration.
+        Returns True if valid, False otherwise.
+        """
+        pass
+    
+    @abstractmethod
+    def process(self, since_date, until_date):
         """
         Process data for the given date range.
         
         Args:
-            config (dict): Plugin-specific configuration data
             since_date (datetime.date): Start date for data retrieval
             until_date (datetime.date): End date for data retrieval
+            
+        Returns:
+            str: JSON string with the processed data
         """
         pass
