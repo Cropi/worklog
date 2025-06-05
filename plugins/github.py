@@ -121,7 +121,7 @@ class GitHubPlugin(PluginBase):
 
         params = {
             "q": query,
-            "per_page": 100,
+            "per_page": 200,
             "sort": "updated" if search_type != "commits" else "author-date",
             "order": "desc",
         }
@@ -197,133 +197,211 @@ class GitHubPlugin(PluginBase):
 
         return False
 
-    def _get_user_commented_issues(self, since_date, until_date):
+    def _get_items_by_query(
+        self, query, item_type, since_date, until_date, need_comment_validation=False
+    ):
         """
-        Get issues that the user has commented on within the time frame.
+        Generic method to fetch GitHub items (issues or PRs) by query.
 
         Args:
+            query: The search query
+            item_type: String description of what we're fetching (for logging)
             since_date: Start date
             until_date: End date
+            need_comment_validation: Whether to validate comments are in timeframe
 
         Returns:
-            Dictionary of issues indexed by ID
+            Dictionary of items indexed by ID
         """
+        log.debug(f"Running GitHub {item_type} query: {query}")
+        items_raw = self._search_github("issues", query)
+
+        result_items = {}
+        if not items_raw:
+            return result_items
+
+        for item in items_raw:
+            # Skip items of wrong type
+            if "pull_request" in item and item_type.startswith("issue"):
+                continue
+            if "pull_request" not in item and item_type.startswith("PR"):
+                continue
+
+            # For items requiring comment validation
+            if need_comment_validation:
+                comments_url = item.get("comments_url", "").replace(
+                    self.api_base_url, ""
+                )
+                comments_raw = self._make_request(comments_url)
+
+                # Skip if no valid comments in timeframe
+                if not comments_raw or not self._has_user_comment_in_timeframe(
+                    comments_raw, self.username, since_date, until_date
+                ):
+                    continue
+
+            # Add to collection
+            item_id = item.get("id")
+            result_items[item_id] = item
+
+        log.info(f"Found {len(result_items)} {item_type} items")
+        return result_items
+
+    def _extract_repo_info(self, item):
+        """Extract repository owner and name from an item."""
+        repo_url = item.get("repository_url", "")
+        repo_parts = repo_url.split("/")
+        if len(repo_parts) >= 2:
+            repo_owner = repo_parts[-2]
+            repo_name = repo_parts[-1]
+        else:
+            repo_owner = "unknown"
+            repo_name = "unknown"
+
+        return repo_owner, repo_name
+
+    def _format_comments(self, comments_raw):
+        """Format comments from API response."""
+        comments = []
+        if not comments_raw:
+            return comments
+
+        for comment in comments_raw:
+            comment_data = {
+                "author": comment.get("user", {}).get("login"),
+                "created_at": self._format_date(comment.get("created_at")),
+                "body": comment.get("body", ""),
+            }
+            comments.append(comment_data)
+
+        return comments
+
+    def _get_user_commented_issues(self, since_date, until_date):
+        """Get issues that the user has commented on within the time frame."""
         since_str = since_date.isoformat()
         until_str = until_date.isoformat()
 
-        # Query for issues the user has commented on
         query = f"commenter:{self.username} updated:{since_str}..{until_str} is:issue"
-
-        log.debug(f"Running GitHub commented issues query: {query}")
-        issues_raw = self._search_github("issues", query)
-
-        commented_issues = {}
-        if not issues_raw:
-            return commented_issues
-
-        for issue in issues_raw:
-            # Get comments for this issue to verify the user commented in the timeframe
-            comments_url = issue.get("comments_url", "").replace(self.api_base_url, "")
-            comments_raw = self._make_request(comments_url)
-
-            # Skip issues where the user didn't comment in the timeframe
-            if not comments_raw or not self._has_user_comment_in_timeframe(
-                comments_raw, self.username, since_date, until_date
-            ):
-                continue
-
-            # Add to our collection, indexed by ID
-            issue_id = issue.get("id")
-            commented_issues[issue_id] = issue
-
-        log.info(
-            f"Found {len(commented_issues)} issues commented on by user {self.username}"
+        return self._get_items_by_query(
+            query,
+            "issues commented on",
+            since_date,
+            until_date,
+            need_comment_validation=True,
         )
-        return commented_issues
 
     def _get_user_created_issues(self, since_date, until_date):
-        """
-        Get issues that the user has created within the time frame.
-
-        Args:
-            since_date: Start date
-            until_date: End date
-
-        Returns:
-            Dictionary of issues indexed by ID
-        """
+        """Get issues that the user has created within the time frame."""
         since_str = since_date.isoformat()
         until_str = until_date.isoformat()
 
-        # Query for issues the user has created
         query = f"author:{self.username} created:{since_str}..{until_str} is:issue"
-
-        log.debug(f"Running GitHub created issues query: {query}")
-        issues_raw = self._search_github("issues", query)
-
-        created_issues = {}
-        if not issues_raw:
-            return created_issues
-
-        for issue in issues_raw:
-            # Skip pull requests
-            if "pull_request" in issue:
-                continue
-
-            # Add to our collection, indexed by ID
-            issue_id = issue.get("id")
-            created_issues[issue_id] = issue
-
-        log.info(f"Found {len(created_issues)} issues created by user {self.username}")
-        return created_issues
+        return self._get_items_by_query(query, "issues created", since_date, until_date)
 
     def _get_user_closed_issues(self, since_date, until_date):
-        """
-        Get issues assigned to the user that were closed within the time frame.
-
-        Args:
-            since_date: Start date
-            until_date: End date
-
-        Returns:
-            Dictionary of issues indexed by ID
-        """
+        """Get issues assigned to the user that were closed within the time frame."""
         since_str = since_date.isoformat()
         until_str = until_date.isoformat()
 
-        # Query for issues assigned to the user that were closed
         query = f"assignee:{self.username} closed:{since_str}..{until_str} is:issue"
+        return self._get_items_by_query(query, "issues closed", since_date, until_date)
 
-        log.debug(f"Running GitHub closed issues query: {query}")
-        issues_raw = self._search_github("issues", query)
+    def _get_user_commented_prs(self, since_date, until_date):
+        """Get PRs that the user has commented on within the time frame."""
+        since_str = since_date.isoformat()
+        until_str = until_date.isoformat()
 
-        closed_issues = {}
-        if not issues_raw:
-            return closed_issues
+        query = f"commenter:{self.username} updated:{since_str}..{until_str} is:pr"
+        return self._get_items_by_query(
+            query,
+            "PRs commented on",
+            since_date,
+            until_date,
+            need_comment_validation=True,
+        )
 
-        for issue in issues_raw:
-            # Skip pull requests
-            if "pull_request" in issue:
-                continue
+    def _get_user_created_prs(self, since_date, until_date):
+        """Get PRs that the user has created within the time frame."""
+        since_str = since_date.isoformat()
+        until_str = until_date.isoformat()
 
-            # Add to our collection, indexed by ID
-            issue_id = issue.get("id")
-            closed_issues[issue_id] = issue
+        query = f"author:{self.username} created:{since_str}..{until_str} is:pr"
+        return self._get_items_by_query(query, "PRs created", since_date, until_date)
 
-        log.info(f"Found {len(closed_issues)} issues closed by user {self.username}")
-        return closed_issues
+    def _get_user_closed_prs(self, since_date, until_date):
+        """Get PRs assigned to the user that were closed within the time frame."""
+        since_str = since_date.isoformat()
+        until_str = until_date.isoformat()
+
+        query = f"assignee:{self.username} closed:{since_str}..{until_str} is:pr"
+        return self._get_items_by_query(query, "PRs closed", since_date, until_date)
+
+    def _get_user_reviewed_prs(self, since_date, until_date):
+        """Get PRs reviewed by the user within the time frame."""
+        since_str = since_date.isoformat()
+        until_str = until_date.isoformat()
+
+        query = f"reviewed-by:{self.username} -author:{self.username} closed:{since_str}..{until_str} is:pr"
+        return self._get_items_by_query(query, "PRs reviewed", since_date, until_date)
+
+    def _format_issue(self, issue):
+        """Format an issue into the standard output structure."""
+        repo_owner, repo_name = self._extract_repo_info(issue)
+
+        # Get comments
+        comments_url = issue.get("comments_url", "").replace(self.api_base_url, "")
+        comments_raw = self._make_request(comments_url)
+        comments = self._format_comments(comments_raw)
+
+        return {
+            "id": issue.get("number"),
+            "repository": f"{repo_owner}/{repo_name}",
+            "title": issue.get("title"),
+            "state": issue.get("state"),
+            "created_by": issue.get("user", {}).get("login"),
+            "created_at": self._format_date(issue.get("created_at")),
+            "updated_at": self._format_date(issue.get("updated_at")),
+            "closed_at": self._format_date(issue.get("closed_at")),
+            "body": issue.get("body", ""),
+            "comments": comments,
+            "url": issue.get("html_url"),
+        }
+
+    def _format_pr(self, pr):
+        """Format a PR into the standard output structure."""
+        repo_owner, repo_name = self._extract_repo_info(pr)
+
+        # Get PR details
+        pr_number = pr.get("number")
+        pr_api_url = (
+            pr.get("pull_request", {}).get("url", "").replace(self.api_base_url, "")
+        )
+        pr_details = self._make_request(pr_api_url) if pr_api_url else {}
+
+        # Get comments
+        comments_url = pr.get("comments_url", "").replace(self.api_base_url, "")
+        comments_raw = self._make_request(comments_url)
+        comments = self._format_comments(comments_raw)
+
+        merged_at = pr_details.get("merged_at") if pr_details else None
+
+        return {
+            "id": pr_number,
+            "repository": f"{repo_owner}/{repo_name}",
+            "title": pr.get("title"),
+            "state": pr.get("state"),
+            "created_by": pr.get("user", {}).get("login"),
+            "created_at": self._format_date(pr.get("created_at")),
+            "updated_at": self._format_date(pr.get("updated_at")),
+            "closed_at": self._format_date(pr.get("closed_at")),
+            "merged_at": self._format_date(merged_at),
+            "body": pr.get("body", ""),
+            "comments": comments,
+            "url": pr.get("html_url"),
+        }
 
     def _get_user_issues(self, since_date, until_date):
-        """
-        Get issues that the user has created, commented on, or closed across all repositories.
-
-        Args:
-            since_date: Start date
-            until_date: End date
-
-        Returns:
-            List of formatted issue data
-        """
+        """Get issues that the user has created, commented on, or closed."""
         # Get issues from each category
         commented_issues = self._get_user_commented_issues(since_date, until_date)
         created_issues = self._get_user_created_issues(since_date, until_date)
@@ -332,200 +410,14 @@ class GitHubPlugin(PluginBase):
         # Combine all issues, avoiding duplicates
         all_issues = {**commented_issues, **created_issues, **closed_issues}
 
-        # Process the unique issues
-        issues = []
-        for issue in all_issues.values():
-            # Get repository information from the issue
-            repo_url = issue.get("repository_url", "")
-            repo_parts = repo_url.split("/")
-            if len(repo_parts) >= 2:
-                repo_owner = repo_parts[-2]
-                repo_name = repo_parts[-1]
-            else:
-                repo_owner = "unknown"
-                repo_name = "unknown"
-
-            # Get comments for this issue
-            comments_url = issue.get("comments_url", "").replace(self.api_base_url, "")
-            comments_raw = self._make_request(comments_url)
-            comments = []
-
-            if comments_raw:
-                for comment in comments_raw:
-                    comment_data = {
-                        "author": comment.get("user", {}).get("login"),
-                        "created_at": self._format_date(comment.get("created_at")),
-                        "body": comment.get("body", ""),
-                    }
-                    comments.append(comment_data)
-
-            issue_data = {
-                "id": issue.get("number"),
-                "repository": f"{repo_owner}/{repo_name}",
-                "title": issue.get("title"),
-                "state": issue.get("state"),
-                "created_by": issue.get("user", {}).get("login"),
-                "created_at": self._format_date(issue.get("created_at")),
-                "updated_at": self._format_date(issue.get("updated_at")),
-                "closed_at": self._format_date(issue.get("closed_at")),
-                "body": issue.get("body", ""),
-                "comments": comments,
-                "url": issue.get("html_url"),
-            }
-            issues.append(issue_data)
+        # Format the issues
+        issues = [self._format_issue(issue) for issue in all_issues.values()]
 
         log.info(f"Found {len(issues)} unique issues involving user {self.username}")
         return issues
 
-    def _get_user_commented_prs(self, since_date, until_date):
-        """
-        Get PRs that the user has commented on within the time frame.
-
-        Args:
-            since_date: Start date
-            until_date: End date
-
-        Returns:
-            Dictionary of PRs indexed by ID
-        """
-        since_str = since_date.isoformat()
-        until_str = until_date.isoformat()
-
-        # Query for PRs the user has commented on
-        query = f"commenter:{self.username} updated:{since_str}..{until_str} is:pr"
-
-        log.debug(f"Running GitHub commented PRs query: {query}")
-        prs_raw = self._search_github("issues", query)
-
-        commented_prs = {}
-        if not prs_raw:
-            return commented_prs
-
-        for pr in prs_raw:
-            # Get comments for this PR to verify the user commented in the timeframe
-            comments_url = pr.get("comments_url", "").replace(self.api_base_url, "")
-            comments_raw = self._make_request(comments_url)
-
-            # Skip PRs where the user didn't comment in the timeframe
-            if not comments_raw or not self._has_user_comment_in_timeframe(
-                comments_raw, self.username, since_date, until_date
-            ):
-                continue
-
-            # Add to our collection, indexed by ID
-            pr_id = pr.get("id")
-            commented_prs[pr_id] = pr
-
-        log.info(f"Found {len(commented_prs)} PRs commented on by user {self.username}")
-        return commented_prs
-
-    def _get_user_created_prs(self, since_date, until_date):
-        """
-        Get PRs that the user has created within the time frame.
-
-        Args:
-            since_date: Start date
-            until_date: End date
-
-        Returns:
-            Dictionary of PRs indexed by ID
-        """
-        since_str = since_date.isoformat()
-        until_str = until_date.isoformat()
-
-        # Query for PRs the user has created
-        query = f"author:{self.username} created:{since_str}..{until_str} is:pr"
-
-        log.debug(f"Running GitHub created PRs query: {query}")
-        prs_raw = self._search_github("issues", query)
-
-        created_prs = {}
-        if not prs_raw:
-            return created_prs
-
-        for pr in prs_raw:
-            # Add to our collection, indexed by ID
-            pr_id = pr.get("id")
-            created_prs[pr_id] = pr
-
-        log.info(f"Found {len(created_prs)} PRs created by user {self.username}")
-        return created_prs
-
-    def _get_user_closed_prs(self, since_date, until_date):
-        """
-        Get PRs assigned to the user that were closed within the time frame.
-
-        Args:
-            since_date: Start date
-            until_date: End date
-
-        Returns:
-            Dictionary of PRs indexed by ID
-        """
-        since_str = since_date.isoformat()
-        until_str = until_date.isoformat()
-
-        # Query for PRs assigned to the user that were closed
-        query = f"assignee:{self.username} closed:{since_str}..{until_str} is:pr"
-
-        log.debug(f"Running GitHub closed PRs query: {query}")
-        prs_raw = self._search_github("issues", query)
-
-        closed_prs = {}
-        if not prs_raw:
-            return closed_prs
-
-        for pr in prs_raw:
-            # Add to our collection, indexed by ID
-            pr_id = pr.get("id")
-            closed_prs[pr_id] = pr
-
-        log.info(f"Found {len(closed_prs)} PRs closed by user {self.username}")
-        return closed_prs
-
-    def _get_user_reviewed_prs(self, since_date, until_date):
-        """
-        Get PRs reviewed by the user within the time frame.
-
-        Args:
-            since_date: Start date
-            until_date: End date
-
-        Returns:
-            Dictionary of PRs indexed by ID
-        """
-        since_str = since_date.isoformat()
-        until_str = until_date.isoformat()
-
-        # Query for PRs reviewed by the user (excluding authored by user)
-        query = f"reviewed-by:{self.username} -author:{self.username} closed:{since_str}..{until_date} is:pr"
-
-        log.debug(f"Running GitHub reviewed PRs query: {query}")
-        prs_raw = self._search_github("issues", query)
-
-        reviewed_prs = {}
-        if not prs_raw:
-            return reviewed_prs
-
-        for pr in prs_raw:
-            # Add to our collection, indexed by ID
-            pr_id = pr.get("id")
-            reviewed_prs[pr_id] = pr
-
-        log.info(f"Found {len(reviewed_prs)} PRs reviewed by user {self.username}")
-        return reviewed_prs
-
     def _get_user_pull_requests(self, since_date, until_date):
-        """
-        Get PRs that the user has created, commented on, reviewed, or closed across all repositories.
-
-        Args:
-            since_date: Start date
-            until_date: End date
-
-        Returns:
-            List of formatted PR data
-        """
+        """Get PRs that the user has created, commented on, reviewed, or closed."""
         # Get PRs from each category
         commented_prs = self._get_user_commented_prs(since_date, until_date)
         created_prs = self._get_user_created_prs(since_date, until_date)
@@ -535,59 +427,8 @@ class GitHubPlugin(PluginBase):
         # Combine all PRs, avoiding duplicates
         all_prs = {**commented_prs, **created_prs, **closed_prs, **reviewed_prs}
 
-        # Process the unique PRs
-        prs = []
-        for pr in all_prs.values():
-            # Get repository information from the PR
-            repo_url = pr.get("repository_url", "")
-            repo_parts = repo_url.split("/")
-            if len(repo_parts) >= 2:
-                repo_owner = repo_parts[-2]
-                repo_name = repo_parts[-1]
-            else:
-                repo_owner = "unknown"
-                repo_name = "unknown"
-
-            # Get PR number for additional API calls
-            pr_number = pr.get("number")
-            pr_api_url = (
-                pr.get("pull_request", {}).get("url", "").replace(self.api_base_url, "")
-            )
-
-            # Get additional PR details
-            pr_details = self._make_request(pr_api_url) if pr_api_url else {}
-
-            # Get comments
-            comments_url = pr.get("comments_url", "").replace(self.api_base_url, "")
-            comments_raw = self._make_request(comments_url)
-            comments = []
-
-            if comments_raw:
-                for comment in comments_raw:
-                    comment_data = {
-                        "author": comment.get("user", {}).get("login"),
-                        "created_at": self._format_date(comment.get("created_at")),
-                        "body": comment.get("body", ""),
-                    }
-                    comments.append(comment_data)
-
-            merged_at = pr_details.get("merged_at") if pr_details else None
-
-            pr_data = {
-                "id": pr_number,
-                "repository": f"{repo_owner}/{repo_name}",
-                "title": pr.get("title"),
-                "state": pr.get("state"),
-                "created_by": pr.get("user", {}).get("login"),
-                "created_at": self._format_date(pr.get("created_at")),
-                "updated_at": self._format_date(pr.get("updated_at")),
-                "closed_at": self._format_date(pr.get("closed_at")),
-                "merged_at": self._format_date(merged_at),
-                "body": pr.get("body", ""),
-                "comments": comments,
-                "url": pr.get("html_url"),
-            }
-            prs.append(pr_data)
+        # Format the PRs
+        prs = [self._format_pr(pr) for pr in all_prs.values()]
 
         log.info(f"Found {len(prs)} pull requests involving user {self.username}")
         return prs
@@ -665,18 +506,18 @@ class GitHubPlugin(PluginBase):
         )
 
         # Get data for each section
-        # issues = self._get_user_issues(since_date, until_date)
+        issues = self._get_user_issues(since_date, until_date)
         pull_requests = self._get_user_pull_requests(since_date, until_date)
-        # commits = self._get_user_commits(since_date, until_date)
+        commits = self._get_user_commits(since_date, until_date)
 
         # Build result
         result = {
             "source": "github",
             "user": self.username,
             "activity": {
-                # "issues": issues,
+                "issues": issues,
                 "pull_requests": pull_requests,
-                # "commits": commits,
+                "commits": commits,
             },
         }
 
