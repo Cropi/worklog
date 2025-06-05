@@ -1,0 +1,10 @@
+[Jira stuff]
+type="jira"
+url="https://issues.redhat.com"
+token="/path/to/jira-token"
+username="Username from https://issues.redhat.com/secure/ViewProfile.jspa"
+
+[GitHub stuff]
+type="github"
+token="/path/to/github-token"
+username="Github username"
