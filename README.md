@@ -1,29 +1,24 @@
-# Worklog
+# Worklog: Unified Reporting & Key Benefits
 
-Worklog is a tool that helps you track and query your work activities across different platforms. It allows you to generate reports about what you've worked on during a specific period of time, bringing together information from various sources into a unified view.
+Worklog is a tool that helps you track and query your work activities across different platforms (Jira, GitHub, ...), generating comprehensive reports about what a certain person worked on during a specific period of time. It not only retrieves metadata about your work but also captures crucial contextual information like comments, descriptions, and other essential details that track the progress and priority of your work. It brings together all this information from various sources into a unified view (JSON).
 
-## Features
+Data returned by worklog is designed to be used for at least three different purposes, serving multiple roles:
 
-- Query your work activities across multiple platforms
-- Filter by date ranges
-- Consolidated output of all your work in one place
-- Extensible plugin system for different platforms
-- Retrieves full context including comments, descriptions, and metadata from each ticket/issue/PR
-- Designed to feed your work data into LLMs for analysis and insights
+- **Workload Validation (Product Owner POV)**
+   - Ability to check which sprint priorities were met or missed.
+   - Verification that a person's work aligned with their assigned priorities for the sprint.
 
-## Key Benefits
+- **Individual Reports (Engineer POV)**
+   - Detailed view of work done by each engineer. Structured data for 1-on-1 meetings with managers to discuss accomplishments and progress.
+   - Easy identification and reporting of blockers, challenges, and dependencies encountered during work.
 
-The main purpose of Worklog is to generate structured data about your contributions that can be fed into Large Language Models (LLMs). This enables:
+- **Stakeholders Report (Manager POV)**
+   - Possible highlights and lowlights from the previous sprint that can be shared with stakeholders.
 
-- AI-assisted analysis of your work patterns and contributions
-- Automatic summarization of your accomplishments for reports or reviews
-- Identification of trends in your work focus and productivity
-- Generation of insights about your technical contributions across platforms
+## Currently Supported plugins
 
-## Currently Supported Platforms
-
-- GitHub - Track your commits, pull requests, reviews, and issues
-- Jira - Track your tickets, comments, and transitions
+- GitHub - Track your commits, pull requests, reviews, issues, and comments
+- Jira - Track your tickets, comments, transitions, and comments
 
 ## Future Integrations
 
@@ -31,13 +26,8 @@ The following integrations are planned for future releases:
 
 - GitLab
 - Fedora Koji
+- CentOS
 - And more to come!
-
-## Installation
-
-```bash
-TODO
-```
 
 ## Configuration
 
@@ -77,6 +67,8 @@ For more options:
 python worklog.py --help
 ```
 
-## Contributing
+## Notes
 
-Contributions are welcome! Feel free to open issues or submit pull requests.
+> **Read-only:** Worklog only collects and aggregates data from your connected platforms. The collected data is designed to be processed by LLMs for analysis and insights.
+> 
+> **Output Format:** All results are returned in JSON format for easy integration, further processing, or analysis.
