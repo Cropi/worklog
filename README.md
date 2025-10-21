@@ -18,13 +18,13 @@ Data returned by worklog is designed to be used for at least three different pur
 ## Currently Supported plugins
 
 - GitHub - Track your commits, pull requests, reviews, issues, and comments
+- GitLab - Track your commits, merge requests, reviews, issues, and comments
 - Jira - Track your tickets, comments, transitions, and comments
 
 ## Future Integrations
 
 The following integrations are planned for future releases:
 
-- GitLab
 - Fedora Koji
 - CentOS
 - And more to come!
@@ -40,6 +40,7 @@ cp template/config ./config
 2. Generate tokens for the services you want to use:
 
    - For GitHub: https://github.com/settings/tokens
+   - For GitLab: https://gitlab.com/-/user_settings/personal_access_tokens (requires `read_api` scope)
    - For Jira: Generate an API token from your Atlassian account
 
 3. Add the tokens and other required information to your config file.

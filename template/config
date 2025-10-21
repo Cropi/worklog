@@ -8,3 +8,8 @@ username="Username from https://issues.redhat.com/secure/ViewProfile.jspa"
 type="github"
 token="/path/to/github-token"
 username="Github username"
+
+[GitLab stuff]
+type="gitlab"
+token="/path/to/gitlab-token"
+username="GitLab username"
