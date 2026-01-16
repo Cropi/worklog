@@ -84,6 +84,7 @@ class GitHubPlugin(PluginBase):
         headers = {
             "Authorization": f"token {self.token}",
             "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "Worklog-App",
         }
 
         url = f"{self.api_base_url}{endpoint}"
@@ -95,14 +96,19 @@ class GitHubPlugin(PluginBase):
             response = requests.get(url, headers=headers, params=params)
             log.debug(f"Response status code: {response.status_code}")
 
-            if response.status_code == 403 and "rate limit" in response.text.lower():
-                log.warning("GitHub API rate limit exceeded")
+            if response.status_code == 403:
+                if "rate limit" in response.text.lower():
+                    log.warning("GitHub API rate limit exceeded")
+                else:
+                    log.error(f"GitHub API 403 Forbidden: {response.text}")
 
             response.raise_for_status()
             return response.json()
 
         except requests.exceptions.RequestException as e:
             log.error(f"Error making request to GitHub API: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                log.error(f"Response content: {e.response.text}")
             return None
 
     def _search_github(self, search_type, query, custom_headers=None):
@@ -130,6 +136,7 @@ class GitHubPlugin(PluginBase):
         headers = {
             "Authorization": f"token {self.token}",
             "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "Worklog-App",
         }
 
         if custom_headers:
@@ -143,8 +150,11 @@ class GitHubPlugin(PluginBase):
             response = requests.get(url, headers=headers, params=params)
             log.debug(f"Response status code: {response.status_code}")
 
-            if response.status_code == 403 and "rate limit" in response.text.lower():
-                log.warning("GitHub API rate limit exceeded")
+            if response.status_code == 403:
+                if "rate limit" in response.text.lower():
+                    log.warning("GitHub API rate limit exceeded")
+                else:
+                    log.error(f"GitHub API 403 Forbidden: {response.text}")
 
             response.raise_for_status()
             search_result = response.json()
@@ -160,6 +170,8 @@ class GitHubPlugin(PluginBase):
 
         except requests.exceptions.RequestException as e:
             log.error(f"Error making request to GitHub API: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                log.error(f"Response content: {e.response.text}")
             return None
 
     def _has_user_comment_in_timeframe(
